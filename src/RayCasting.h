@@ -50,4 +50,8 @@ public:
     glm::vec3 _cameraForward = glm::vec3(0.f, 0.f, 1.f);
     glm::vec3 _cameraUp = glm::vec3(0.f, 1.f, 0.f);
     glm::vec3 _cameraRight = glm::vec3(1.f, 0.f, 0.f);
+
+    std::unique_ptr<gfx::Buffer> settingsBuffer;
+    float step = 0.001f;
+    glm::vec4 backgroundColor = glm::vec4(0.f, 0.f, 0.f, 1.f);
 };

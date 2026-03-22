@@ -80,7 +80,7 @@ std::unique_ptr<gfx::Image> createVolumeTexture(const std::string& fileLocation,
 }
 
 std::unique_ptr<gfx::Image> createTFTexture(const std::string& fileLocation) {
-    std::ifstream inFile(fileLocation.c_str(), std::ifstream::in);
+    std::ifstream inFile(fileLocation.c_str(), std::ifstream::in | std::ifstream::binary);
     if (!inFile)
     {
         std::cerr << "Error openning file: " << fileLocation << std::endl;
@@ -96,9 +96,6 @@ std::unique_ptr<gfx::Image> createTFTexture(const std::string& fileLocation) {
     } else if (inFile.fail()) {
         std::cerr << fileLocation << " nu s-a putut citi" << std::endl;
         throw std::runtime_error("Failed to open file: " + fileLocation);
-    } else {
-        std::cerr << fileLocation << " este prea mare" << std::endl;
-        throw std::runtime_error("File is too large: " + fileLocation);
     }
 
     auto tff1DTex = gfx::Image::Builder()
@@ -115,6 +112,12 @@ std::unique_ptr<gfx::Image> createTFTexture(const std::string& fileLocation) {
         .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostVisible)
         .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostCoherent)
         .build();
+
+    for (int i = 0; i < 256; i++)
+    {
+        std::cout << "TF: " << static_cast<int>(tff[i * 4]) << " " << static_cast<int>(tff[i * 4 + 1]) << " " << static_cast<int>(tff[i * 4 + 2]) << " " << static_cast<int>(tff[i * 4 + 3]) << std::endl;
+    }
+    std::cout << "TF size: " << tff.size() << " bytes" << std::endl;
 
     stagingBuffer->Map();
     stagingBuffer->Write(std::span { tff });
@@ -254,6 +257,18 @@ void RayCasting::Initialize()
         .setAddressModeU(gfx::Sampler::AddressMode::eRepeat)
         .build();
 
+    settingsBuffer = gfx::Buffer::Builder()
+        .setSize(2 * sizeof(glm::vec4))
+        .setUsage(gfx::Buffer::Usage::eUniform)
+        .setMemoryProperties(gfx::Buffer::MemoryProperty::eHostVisible)
+        .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostCoherent)
+        .build();
+
+    settingsBuffer->Map();
+    settingsBuffer->Write(step);
+    settingsBuffer->Write(backgroundColor, 4 * sizeof(float));
+    settingsBuffer->Unmap();
+
     const glm::mat4 viewMatrix = glm::lookAt(
         glm::vec3(0.0f, 0.0f, -5.0f),
         glm::vec3(0.0f, 0.0f, 0.0f),
@@ -312,6 +327,7 @@ void RayCasting::Initialize()
             .write(0, gfx::Descriptor(view.get(), volumeSampler.get()))
             .write(1, gfx::Descriptor(tfTextureView.get(), tfSampler.get()))
             .write(2, gfx::Descriptor(exitPointsView.get(), exitPointsSampler.get()))
+            .write(3, gfx::Descriptor(settingsBuffer.get()))
             .build();
     }
 }
@@ -387,14 +403,14 @@ void RayCasting::Render(gfx::CommandBuffer& commandBuffer)
     // TODO: record render commands
     commandBuffer
         .BeginRendering(exitPointsFramebuffer.get())
-        .SetViewport(0.f, 0.f, static_cast<float>(gfx::Context::Window().getExtent().x), static_cast<float>(gfx::Context::Window().getExtent().y))
+        .SetViewport(0, 0, gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
         .SetScissor(0, 0 , gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
         .BindPipeline(calculateBackFacesPipeline.get())
         .BindDescriptorSet(0, transformationSet.get())
         .DrawMesh(cubeMesh.get(), 1, 0)
         .EndRendering()
         .BeginRendering()
-        .SetViewport(0.f, 0.f, static_cast<float>(gfx::Context::Window().getExtent().x), static_cast<float>(gfx::Context::Window().getExtent().y))
+        .SetViewport(0, 0, gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
         .SetScissor(0, 0 , gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
         .BindPipeline(rayCastingPipeline.get())
         .BindDescriptorSet(1, rayCastingSets[currentVolumeName].get())
@@ -410,5 +426,17 @@ void RayCasting::RenderUI(ImGuiContext* context)
     for (const auto& name : volumeData | std::views::keys)
         if (ImGui::Selectable(name.c_str(), name == currentVolumeName))
             currentVolumeName = name;
+    ImGui::End();
+    ImGui::Separator();
+    ImGui::Begin("Ray Casting Settings");
+    bool changed = false;
+    changed |= ImGui::SliderFloat("Step", &step, 0.0001f, 0.01f, "%.4f", ImGuiSliderFlags_Logarithmic);
+    changed |= ImGui::ColorEdit4("Background Color", glm::value_ptr(backgroundColor));
+    if (changed) {
+        settingsBuffer->Map();
+        settingsBuffer->Write(step);
+        settingsBuffer->Write(backgroundColor, sizeof(float) * 4);
+        settingsBuffer->Unmap();
+    }
     ImGui::End();
 }

@@ -6,18 +6,20 @@ layout(location = 1) in vec4 ExitPointCoord;
 layout(set = 1, binding = 0) uniform sampler3D VolumeTex;
 layout(set = 1, binding = 1) uniform sampler1D TransferFunc;
 layout(set = 1, binding = 2) uniform sampler2D ExitPoints;
+layout(set = 1, binding = 3) uniform Params {
+    float StepSize;
+    vec4 bgColor;
+};
 
 layout (location = 0) out vec4 FragColor;
 
 void main()
 {
-    float StepSize = 0.001;		// pasul de esantionare pe raza
-
     // TODO4
     // calculeaza coordonatele pentru accesarea texturii ExistPoints
     // in functie de ExitPointCoord (componentele x,y si w)
     vec2 ExitFragCoord = (ExitPointCoord.xy / ExitPointCoord.w) * 0.5 + 0.5;
-    ExitFragCoord.y = -ExitFragCoord.y; //in oglinda pe y pentru ca textura e in oglinda
+//    ExitFragCoord.y = -ExitFragCoord.y; //in oglinda pe y pentru ca textura e in oglinda
 
     //TODO5
     // acceseaza coordonatele texturii ExitPoints in functie de coordonatele de textura
@@ -47,8 +49,6 @@ void main()
     vec4 colorSample;				// culoarea curenta (Csrc)
     float alphaSample;				// opacitatea curenta (Asrc)
 
-    vec4 bgColor = vec4(1, 1, 1, 0);	//culoarea de fundal
-
     for(int i = 0; i < 2000; i++)	//nu calculez mai mult de 2000 culori per raza
     {
         //TODO8
@@ -57,6 +57,13 @@ void main()
         // Vedeti ca textura intoarce un vec4 si intensity este un float (luati primul canal)
         intensity = texture(VolumeTex, voxelCoord).r;
 
+        if (intensity < 0.01f) {
+            // daca intensitatea e 0, nu e nevoie sa calculez nimic, trec la urmatorul voxel
+            voxelCoord += deltaDir;
+            lengthAcum += StepSize;
+            continue;
+        }
+
         //TODO9
         // determina culoarea cu functia de transfer
         //in functie de textura TransferFunc si de intensitatea voxelului
@@ -64,7 +71,7 @@ void main()
 
         if (colorSample.a > 0.0) {
             // se moduleaza opacitatea si culoarea lui colorSample dupa niste formule
-            colorSample.a = 1.0 - pow(1.0 - colorSample.a, StepSize*200.0f);
+            colorSample.a = 1.0 - pow(1.0 - colorSample.a, StepSize * 200.0f);
             colorSample.rgb *= colorSample.a;
 
             // compunere din fata in spate
@@ -83,7 +90,6 @@ void main()
         if (lengthAcum >= len)
         {
             // s-a terminat daca am iesit cu raza din volum
-            colorAcum.rgb = colorAcum.rgb + (1 - colorAcum.a) * bgColor.rgb;
             break;
         }
         else if (colorAcum.a > 1.0)
@@ -93,6 +99,11 @@ void main()
             break;
         }
     }
+
+    colorAcum.rgb = colorAcum.rgb + (1 - colorAcum.a) * bgColor.rgb;
+
+    // add background color
+
     FragColor = colorAcum;
 
     //Numai pentru testare
