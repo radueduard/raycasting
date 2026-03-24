@@ -1,4 +1,5 @@
 #version 450 core
+#extension GL_EXT_scalar_block_layout : enable
 
 layout(location = 0) in vec3 EntryPoint;
 layout(location = 1) in vec4 ExitPointCoord;
@@ -6,9 +7,9 @@ layout(location = 1) in vec4 ExitPointCoord;
 layout(set = 1, binding = 0) uniform sampler3D VolumeTex;
 layout(set = 1, binding = 1) uniform sampler1D TransferFunc;
 layout(set = 1, binding = 2) uniform sampler2D ExitPoints;
-layout(set = 1, binding = 3) uniform Params {
+layout(set = 1, binding = 3, std430) uniform Params {
+    vec3 bgColor;
     float StepSize;
-    vec4 bgColor;
 };
 
 layout (location = 0) out vec4 FragColor;
@@ -100,7 +101,7 @@ void main()
         }
     }
 
-    colorAcum.rgb = colorAcum.rgb + (1 - colorAcum.a) * bgColor.rgb;
+    colorAcum.rgb = colorAcum.rgb + (1 - colorAcum.a) * bgColor;
 
     // add background color
 

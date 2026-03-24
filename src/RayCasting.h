@@ -9,6 +9,7 @@
 #include <framebuffer.h>
 #include <graphicsPipeline.h>
 #include <descriptorSet.h>
+#include <gui.h>
 
 class RayCasting final : public gfx::Scene
 {
@@ -53,5 +54,10 @@ public:
 
     std::unique_ptr<gfx::Buffer> settingsBuffer;
     float step = 0.001f;
-    glm::vec4 backgroundColor = glm::vec4(0.f, 0.f, 0.f, 1.f);
+    glm::vec3 backgroundColor = glm::vec3(0.f, 0.f, 0.f);
+
+    // gui info
+    int currentZSlice = 0;
+    std::unique_ptr<gfx::GUI_Image> slicePreview;
+    std::unique_ptr<gfx::GUI_Image> gradientPreview;
 };

@@ -62,6 +62,7 @@ std::unique_ptr<gfx::Image> createVolumeTexture(const std::string& fileLocation,
         .setExtent({ x, y, z })
         .setUsage(gfx::Image::Usage::eSampled)
         .addUsage(gfx::Image::Usage::eTransferDst)
+        .addUsage(gfx::Image::Usage::eTransferSrc)
         .build();
 
     auto stagingBuffer = gfx::Buffer::Builder()
@@ -103,6 +104,7 @@ std::unique_ptr<gfx::Image> createTFTexture(const std::string& fileLocation) {
         .setFormat(gfx::Image::Format::eRGBA8_UNORM)
         .setExtent({ 256, 1, 1 })
         .setUsage(gfx::Image::Usage::eSampled)
+        .addUsage(gfx::Image::Usage::eTransferSrc)
         .addUsage(gfx::Image::Usage::eTransferDst)
         .build();
 
@@ -112,12 +114,6 @@ std::unique_ptr<gfx::Image> createTFTexture(const std::string& fileLocation) {
         .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostVisible)
         .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostCoherent)
         .build();
-
-    for (int i = 0; i < 256; i++)
-    {
-        std::cout << "TF: " << static_cast<int>(tff[i * 4]) << " " << static_cast<int>(tff[i * 4 + 1]) << " " << static_cast<int>(tff[i * 4 + 2]) << " " << static_cast<int>(tff[i * 4 + 3]) << std::endl;
-    }
-    std::cout << "TF size: " << tff.size() << " bytes" << std::endl;
 
     stagingBuffer->Map();
     stagingBuffer->Write(std::span { tff });
@@ -182,6 +178,7 @@ void RayCasting::LoadVolumes()
             volumeDataView[name] = gfx::ImageView::Builder(*volumeData[name])
                 .setViewType(gfx::ImageView::Type::e3D)
                 .build();
+            volumeSizes[name] = { x, y, z };
         } catch (const std::exception& e) {
             std::cerr << "Error loading volume " << name << ": " << e.what() << std::endl;
         }
@@ -258,15 +255,15 @@ void RayCasting::Initialize()
         .build();
 
     settingsBuffer = gfx::Buffer::Builder()
-        .setSize(2 * sizeof(glm::vec4))
+        .setSize(sizeof(glm::vec4))
         .setUsage(gfx::Buffer::Usage::eUniform)
         .setMemoryProperties(gfx::Buffer::MemoryProperty::eHostVisible)
         .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostCoherent)
         .build();
 
     settingsBuffer->Map();
-    settingsBuffer->Write(step);
-    settingsBuffer->Write(backgroundColor, 4 * sizeof(float));
+    settingsBuffer->Write(backgroundColor);
+    settingsBuffer->Write(step, sizeof(glm::vec3));
     settingsBuffer->Unmap();
 
     const glm::mat4 viewMatrix = glm::lookAt(
@@ -330,6 +327,9 @@ void RayCasting::Initialize()
             .write(3, gfx::Descriptor(settingsBuffer.get()))
             .build();
     }
+
+    slicePreview = gfx::GUI_Image::Create(*volumeData[currentVolumeName], currentZSlice);
+    gradientPreview = gfx::GUI_Image::Create(*tfTexture, 0);
 }
 
 void RayCasting::Update()
@@ -403,8 +403,8 @@ void RayCasting::Render(gfx::CommandBuffer& commandBuffer)
     // TODO: record render commands
     commandBuffer
         .BeginRendering(exitPointsFramebuffer.get())
-        .SetViewport(0, 0, gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
-        .SetScissor(0, 0 , gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
+        .SetViewport(0, 0, exitPoints->getExtent().x, exitPoints->getExtent().y)
+        .SetScissor(0, 0 , exitPoints->getExtent().x, exitPoints->getExtent().y)
         .BindPipeline(calculateBackFacesPipeline.get())
         .BindDescriptorSet(0, transformationSet.get())
         .DrawMesh(cubeMesh.get(), 1, 0)
@@ -422,21 +422,63 @@ void RayCasting::RenderUI(ImGuiContext* context)
 {
     ImGui::SetCurrentContext(context);
     // TODO: define ui for the scene
-    ImGui::Begin("Volume Selection");
+
+    ImGui::PushFont(gfx::GUI::GetFont(gfx::Font::Bold));
+    ImGui::Begin("Volume Selection", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::PushFont(gfx::GUI::GetFont(gfx::Font::Regular));
     for (const auto& name : volumeData | std::views::keys)
+    {
         if (ImGui::Selectable(name.c_str(), name == currentVolumeName))
+        {
             currentVolumeName = name;
+            slicePreview->setImage(*volumeData[currentVolumeName]);
+            currentZSlice = 0;
+        }
+    }
+    ImGui::PopFont();
     ImGui::End();
-    ImGui::Separator();
-    ImGui::Begin("Ray Casting Settings");
+    ImGui::Begin("Volume Data slices", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Z-Slice").x) / 2);
+    ImGui::Text("Z-Slice");
+    ImGui::PushFont(gfx::GUI::GetFont(gfx::Font::Regular));
+    ImGui::SetNextItemWidth(300);
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - 300) / 2);
+    if (ImGui::SliderInt("##Z Slice", &currentZSlice, 0, volumeSizes[currentVolumeName].z - 1))
+    {
+        slicePreview->setLayerAndLevel(currentZSlice, 0);
+    }
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - 280) / 2);
+    ImGui::Image(**slicePreview,
+        ImVec2(280, 280),
+        ImVec2(0.f, 0.f),
+        ImVec2(1.f, 1.f));
+
+    ImGui::PushFont(gfx::GUI::GetFont(gfx::Font::Bold));
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Transfer Function").x) / 2);
+    ImGui::Text("Transfer Function");
+    ImGui::PopFont();
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - 280) / 2);
+    ImGui::ImageWithBg(**gradientPreview,
+        ImVec2(280, 20),
+        ImVec2(0.f, 0.f),
+        ImVec2(1.f, 1.f),
+        ImVec4(0.f, 0.f, 0.f, 1.f));
+    ImGui::PopFont();
+    ImGui::End();
+    ImGui::Begin("Ray Casting Settings", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::PushFont(gfx::GUI::GetFont(gfx::Font::Regular));
+
     bool changed = false;
     changed |= ImGui::SliderFloat("Step", &step, 0.0001f, 0.01f, "%.4f", ImGuiSliderFlags_Logarithmic);
-    changed |= ImGui::ColorEdit4("Background Color", glm::value_ptr(backgroundColor));
+    changed |= ImGui::ColorEdit3("Background Color", glm::value_ptr(backgroundColor));
     if (changed) {
         settingsBuffer->Map();
-        settingsBuffer->Write(step);
-        settingsBuffer->Write(backgroundColor, sizeof(float) * 4);
+        settingsBuffer->Write(backgroundColor);
+        settingsBuffer->Write(step, sizeof(glm::vec3));
         settingsBuffer->Unmap();
     }
+    ImGui::PopFont();
     ImGui::End();
+    ImGui::PopFont();
+
 }
