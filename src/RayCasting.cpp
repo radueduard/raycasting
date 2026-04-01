@@ -8,8 +8,9 @@
 #include <window.h>
 #include <framebuffer.h>
 #include <fstream>
-#include "cubeMesh.h"
 #include <descriptorSet.h>
+#include <imgui-extra.h>
+#include <meshLayout.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #define GLM_FORCE_RADIANS
@@ -18,6 +19,44 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.inl>
+
+using LabVertex = gfx::ParamVertex<
+    gfx::Position3,
+    gfx::Color3
+>;
+
+using LabMesh = gfx::ParamMesh<LabVertex>;
+
+std::unique_ptr<gfx::Mesh> CreateCubeMesh() {
+    const std::vector<LabVertex> vertices
+    {
+        { glm::vec3(0, 0, 0), glm::vec3(0, 0, 0) },
+        { glm::vec3(0, 0, 1), glm::vec3(0, 0, 1) },
+        { glm::vec3(0, 1, 0), glm::vec3(0, 1, 0) },
+        { glm::vec3(0, 1, 1), glm::vec3(0, 1, 1) },
+        { glm::vec3(1, 0, 0), glm::vec3(1, 0, 0) },
+        { glm::vec3(1, 0, 1), glm::vec3(1, 0, 1) },
+        { glm::vec3(1, 1, 0), glm::vec3(1, 1, 0) },
+        { glm::vec3(1, 1, 1), glm::vec3(1, 1, 1) }
+    };
+    std::vector<unsigned int> indices =
+    {
+        1, 5, 7,
+        7, 3, 1,
+        0, 2, 6,
+        6, 4, 0,
+        0, 1, 3,
+        3, 2, 0,
+        7, 5, 4,
+        4, 6, 7,
+        2, 3, 7,
+        7, 6, 2,
+        1, 0, 4,
+        4, 5, 1
+    };
+
+    return LabMesh::Create(vertices, indices);
+}
 
 std::vector<glm::u8> loadRAWFile(const std::string& fileLocation, unsigned int x, unsigned int y, unsigned int z)
 {
@@ -190,7 +229,7 @@ void RayCasting::LoadVolumes()
 void RayCasting::Initialize()
 {
     // TODO: setup resources
-    cubeMesh = CubeMesh::Create();
+    cubeMesh = CreateCubeMesh();
 
     const auto backfaceVertex = gfx::Shader::Builder()
         .setPath(SHADERS_PATH "backFace.vert.glsl")
@@ -222,7 +261,7 @@ void RayCasting::Initialize()
         .build();
 
     calculateBackFacesPipeline = gfx::GraphicsPipeline::Builder()
-        .setVertexShader<CubeMesh>(*backfaceVertex)
+        .setVertexShader(*backfaceVertex)
         .setFragmentShader(*backfaceFragment)
         .setFramebuffer(*exitPointsFramebuffer)
         .setRasterizationState(gfx::RasterizationState {
@@ -311,7 +350,7 @@ void RayCasting::Initialize()
         .build();
 
     rayCastingPipeline = gfx::GraphicsPipeline::Builder()
-        .setVertexShader<CubeMesh>(*raycastVertex)
+        .setVertexShader(*raycastVertex)
         .setFragmentShader(*raycastFragment)
         .setRasterizationState(gfx::RasterizationState {
             .cullMode = gfx::CullMode::eBack,
@@ -329,7 +368,17 @@ void RayCasting::Initialize()
     }
 
     slicePreview = gfx::GUI_Image::Create(*volumeData[currentVolumeName], currentZSlice);
-    gradientPreview = gfx::GUI_Image::Create(*tfTexture, 0);
+
+    auto bytes = tfTexture->ReadData(0, 0);
+    std::vector<ImVec4> colors;
+    for (size_t i = 0; i < bytes.size(); i += 4) {
+        const float r = static_cast<glm::u8>(bytes[i]) / 255.f;
+        const float g = static_cast<glm::u8>(bytes[i + 1]) / 255.f;
+        const float b = static_cast<glm::u8>(bytes[i + 2]) / 255.f;
+        const float a = static_cast<glm::u8>(bytes[i + 3]) / 255.f;
+        colors.emplace_back(r, g, b, a);
+    }
+    gradientEditor = GradientEditor(colors);
 }
 
 void RayCasting::Update()
@@ -403,20 +452,21 @@ void RayCasting::Render(gfx::CommandBuffer& commandBuffer)
     // TODO: record render commands
     commandBuffer
         .BeginRendering(exitPointsFramebuffer.get())
+        .BindPipeline(calculateBackFacesPipeline.get())
         .SetViewport(0, 0, exitPoints->getExtent().x, exitPoints->getExtent().y)
         .SetScissor(0, 0 , exitPoints->getExtent().x, exitPoints->getExtent().y)
-        .BindPipeline(calculateBackFacesPipeline.get())
         .BindDescriptorSet(0, transformationSet.get())
         .DrawMesh(cubeMesh.get(), 1, 0)
         .EndRendering()
         .BeginRendering()
+        .BindPipeline(rayCastingPipeline.get())
         .SetViewport(0, 0, gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
         .SetScissor(0, 0 , gfx::Context::Window().getExtent().x, gfx::Context::Window().getExtent().y)
-        .BindPipeline(rayCastingPipeline.get())
         .BindDescriptorSet(1, rayCastingSets[currentVolumeName].get())
         .DrawMesh(cubeMesh.get(), 1, 0)
         .EndRendering();
 }
+
 
 void RayCasting::RenderUI(ImGuiContext* context)
 {
@@ -457,12 +507,33 @@ void RayCasting::RenderUI(ImGuiContext* context)
     ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Transfer Function").x) / 2);
     ImGui::Text("Transfer Function");
     ImGui::PopFont();
-    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - 280) / 2);
-    ImGui::ImageWithBg(**gradientPreview,
-        ImVec2(280, 20),
-        ImVec2(0.f, 0.f),
-        ImVec2(1.f, 1.f),
-        ImVec4(0.f, 0.f, 0.f, 1.f));
+
+    ImGui::SetNextItemWidth(300);
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - 300) / 2);
+
+    if (gradientEditor.Draw("##Gradient Editor"))
+    {
+        const auto stagingBuffer = gfx::Buffer::Builder()
+            .setSize(tfTexture->getExtent().x * sizeof(glm::u8vec4))
+            .setUsage(gfx::Buffer::Usage::eTransferSrc)
+            .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostVisible)
+            .addMemoryProperty(gfx::Buffer::MemoryProperty::eHostCoherent)
+            .build();
+        stagingBuffer->Map();
+        for (int i = 0; i < 256; i++)
+        {
+            const auto color = gradientEditor.Sample(static_cast<float>(i) / 255.f);
+            glm::u8vec4 color8 = {
+                static_cast<glm::u8>(color.x * 255.f),
+                static_cast<glm::u8>(color.y * 255.f),
+                static_cast<glm::u8>(color.z * 255.f),
+                static_cast<glm::u8>(color.w * 255.f)
+            };
+            stagingBuffer->WriteAt(i, color8);
+        }
+        stagingBuffer->Unmap();
+        tfTexture->CopyFrom(*stagingBuffer, 0, 0);
+    }
     ImGui::PopFont();
     ImGui::End();
     ImGui::Begin("Ray Casting Settings", nullptr, ImGuiWindowFlags_NoCollapse);

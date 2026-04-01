@@ -10,6 +10,7 @@
 #include <graphicsPipeline.h>
 #include <descriptorSet.h>
 #include <gui.h>
+#include <imgui-extra.h>
 
 class RayCasting final : public gfx::Scene
 {
@@ -59,5 +60,6 @@ public:
     // gui info
     int currentZSlice = 0;
     std::unique_ptr<gfx::GUI_Image> slicePreview;
-    std::unique_ptr<gfx::GUI_Image> gradientPreview;
+
+    GradientEditor gradientEditor;
 };
